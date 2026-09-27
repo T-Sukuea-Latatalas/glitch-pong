@@ -2,8 +2,8 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Atari-style Pong Template</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>CYBER BEAT PONG - Glitch Invasion (Auto BOT)</title>
     <style>
         * {
             box-sizing: border-box;
@@ -11,480 +11,1747 @@
             padding: 0;
         }
 
-        body {
-            background-color: #111;
+        :root {
+            --sat: env(safe-area-inset-top, 0px);
+            --sar: env(safe-area-inset-right, 0px);
+            --sab: env(safe-area-inset-bottom, 0px);
+            --sal: env(safe-area-inset-left, 0px);
+        }
+
+        html, body {
+            width: 100%;
+            height: 100vh;
+            height: 100dvh;
+            overflow: hidden;
+            background-color: #030308;
             color: #fff;
             font-family: 'Courier New', Courier, monospace;
+            touch-action: none;
+        }
+
+        body {
             display: flex;
-            flex-direction: column;
             align-items: center;
             justify-content: center;
-            min-height: 100vh;
-            overflow: hidden;
+            padding-top: var(--sat);
+            padding-right: var(--sar);
+            padding-bottom: var(--sab);
+            padding-left: var(--sal);
         }
 
         #game-container {
             display: flex;
             flex-direction: column;
             align-items: center;
-            box-shadow: 0 0 20px rgba(255, 255, 255, 0.1);
+            justify-content: center;
+            width: 100%;
+            height: 100%;
+            padding: 8px;
+            overflow: hidden;
+        }
+
+        .canvas-wrapper {
+            flex: 1;
+            min-height: 0;
+            min-width: 0;
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
 
         canvas {
-            background-color: #000;
-            border: 2px solid #333;
+            background-color: #020205;
+            border: 2px solid #00f0ff;
             display: block;
+            aspect-ratio: 800 / 500;
+            width: 100%;
+            height: auto;
+            max-width: 100%;
+            max-height: 100%;
+            user-select: none;
+            -webkit-user-select: none;
+            transition: border-color 0.4s ease, box-shadow 0.4s ease;
+            box-shadow: 0 0 25px rgba(0, 240, 255, 0.2);
         }
 
         .instructions {
-            margin-top: 12px;
-            font-size: 14px;
-            color: #888;
+            margin-top: 8px;
+            font-size: 13px;
+            color: #00f0ff;
+            text-shadow: 0 0 6px rgba(0, 240, 255, 0.6);
+            text-align: center;
+            line-height: 1.4;
+            flex-shrink: 0;
+            letter-spacing: 1px;
+            transition: color 0.4s ease;
+        }
+
+        @media (orientation: landscape) and (max-height: 500px) {
+            #game-container {
+                padding: 2px 4px;
+            }
+            canvas {
+                border-width: 1px;
+            }
+            .instructions {
+                margin-top: 3px;
+                font-size: 10px;
+                line-height: 1.1;
+                transform: scale(0.95);
+            }
         }
     </style>
 </head>
 <body>
 
 <div id="game-container">
-    <canvas id="gameCanvas"></canvas>
-    <div class="instructions">操作: [W] / [S] または [↑] / [↓] キー | [Space] でリスタート</div>
+    <div class="canvas-wrapper">
+        <canvas id="gameCanvas"></canvas>
+    </div>
+    <div class="instructions" id="instructionText">
+        [W]/[S] または 画面タッチで迎撃 | [B]キーまたは右上3回タップでBOT
+    </div>
 </div>
 
 <script>
 /**
  * =============================================================================
- * 1. 設定パラメータ (CONFIG)
+ * 1. 設定パラメータ (CONFIG) & 音楽フェーズ定義
  * =============================================================================
- * ゲームバランスや見た目に関する定数をすべてここに集約しています。
- * 値を書き換えるだけで簡単にゲームの難易度やルールを調整できます。
  */
 const CONFIG = {
     canvas: {
         width: 800,
         height: 500,
     },
-    game: {
-        winningScore: 5,        // 勝利に必要なスコア
-        centerLineDash: [6, 6], // 中央線の点線パターン [線の長さ, 空白の長さ]
-        fontFamily: "'Courier New', Courier, monospace",
+    audio: {
+        bpm: 126,
+        masterVolume: 0.36,
+        distortionAmount: 38,
     },
-    colors: {
-        background: '#000000',
-        player: '#ffffff',
-        ai: '#ffffff',
-        ball: '#ffffff',
-        centerLine: '#444444',
-        text: '#ffffff',
+    rhythm: {
+        perfectWindow: 0.080,
+        greatWindow: 0.155,
+        smashMultiplier: 1.55,
+    },
+    game: {
+        fontFamily: "'Courier New', Courier, monospace",
+        centerLineDash: [6, 8],
     },
     ball: {
-        size: 12,               // ボールの一辺の長さ（正方形）
-        initialSpeed: 5,        // 初速
-        speedIncrement: 1.05,   // パドルに当たるごとの加速倍率
-        maxSpeed: 14,           // 最高速度
-        maxBounceAngle: Math.PI / 3, // 反射時の最大角度（60度）
+        size: 12,
+        initialSpeed: 6.0,
+        speedIncrement: 1.04,
+        maxSpeed: 21,
+        maxBounceAngle: Math.PI / 3,
     },
     paddle: {
-        width: 12,
-        height: 80,
-        speed: 7,               // プレイヤーの移動速度
-        offsetFromWall: 30,     // 左右の壁からのオフセット
+        width: 14,
+        normalHeight: 84,
+        shrinkHeight: 42,
+        speed: 8.5,
+        touchLerp: 0.55,
+        offsetFromWall: 28,
     },
     ai: {
-        speed: 5.5,             // AIパドルの移動速度（難易度に直結）
-        reactionLag: 0.1,       // 追従のスムーズさ（0〜1。小さいほど反応が遅れる）
-        predictionError: 15,    // 狙いのブレ・遊び（px単位）
+        width: 16,
+        height: 96,
+        offsetFromWall: 26,
     }
 };
 
+const PHASES = [
+    {
+        level: 1,
+        name: 'PHASE 1: INTRO',
+        subtext: 'NO GLITCHES / CLEAN SYSTEM',
+        minRally: 0,
+        color: '#00f0ff',
+        glow: 'rgba(0, 240, 255, 0.8)',
+        trailLength: 6,
+        pulseBoost: 0.05
+    },
+    {
+        level: 2,
+        name: 'PHASE 2: RHYTHM IN',
+        subtext: 'MINOR GLITCH DETECTED',
+        minRally: 5,
+        color: '#ff007f',
+        glow: 'rgba(255, 0, 127, 0.85)',
+        trailLength: 10,
+        pulseBoost: 0.09
+    },
+    {
+        level: 3,
+        name: 'PHASE 3: ARPEGGIO',
+        subtext: 'CRITICAL SYSTEM TAMPERING',
+        minRally: 12,
+        color: '#b026ff',
+        glow: 'rgba(176, 38, 255, 0.9)',
+        trailLength: 15,
+        pulseBoost: 0.13
+    },
+    {
+        level: 4,
+        name: 'PHASE MAX: OVERDRIVE',
+        subtext: 'TOTAL CHAOS / MULTI-HACK',
+        minRally: 20,
+        color: '#ffea00',
+        glow: 'rgba(255, 234, 0, 0.95)',
+        trailLength: 22,
+        pulseBoost: 0.18
+    }
+];
+
 /**
  * =============================================================================
- * 2. 入力ハンドラ (InputHandler)
+ * 2. Web Audio API 音源エンジン
  * =============================================================================
- * 入力デバイス（キーボード）の状態を管理し、パドル操作と疎結合にします。
- * タッチ操作やマウス操作に拡張したい場合は、このクラス内を拡張します。
+ */
+class SoundEngine {
+    constructor() {
+        this.ctx = null;
+        this.masterGain = null;
+        this.distortionNode = null;
+        this.isPlaying = false;
+        this.isMuffled = false;
+
+        this.tempo = CONFIG.audio.bpm;
+        this.stepTime = (60 / this.tempo) / 4;
+        this.currentStep = 0;
+        this.nextStepTime = 0;
+        this.timerID = null;
+
+        this.onBeat = null;
+        this.noiseBuffer = null;
+        this.currentPhaseLevel = 1;
+
+        this.acidBassPattern = [
+            { freq: 55.00,  accent: true,  cutoff: 2800 },
+            { freq: 110.00, accent: false, cutoff: 1600 },
+            { freq: 55.00,  accent: false, cutoff: 1200 },
+            { freq: 110.00, accent: true,  cutoff: 2400 },
+            { freq: 65.41,  accent: true,  cutoff: 3200 },
+            { freq: 130.81, accent: false, cutoff: 1800 },
+            { freq: 77.78,  accent: true,  cutoff: 3500 },
+            { freq: 82.41,  accent: false, cutoff: 1500 },
+            { freq: 55.00,  accent: true,  cutoff: 3000 },
+            { freq: 110.00, accent: false, cutoff: 1400 },
+            { freq: 110.00, accent: true,  cutoff: 2600 },
+            { freq: 98.00,  accent: false, cutoff: 1600 },
+            { freq: 65.41,  accent: true,  cutoff: 3200 },
+            { freq: 73.42,  accent: false, cutoff: 1800 },
+            { freq: 82.41,  accent: true,  cutoff: 2800 },
+            { freq: 103.83, accent: true,  cutoff: 3600 },
+        ];
+
+        this.arpPattern = [
+            440.00, 523.25, 659.25, 880.00,
+            783.99, 659.25, 587.33, 523.25,
+            440.00, 587.33, 659.25, 880.00,
+            1046.50, 880.00, 783.99, 1318.51
+        ];
+
+        this.chordStabs = {
+            0:  [220.00, 261.63, 329.63],
+            6:  [174.61, 220.00, 261.63],
+            10: [196.00, 246.94, 293.66],
+            14: [164.81, 196.00, 246.94]
+        };
+
+        this.scaleFrequencies = [220.0, 261.63, 293.66, 329.63, 392.00, 440.0];
+    }
+
+    init() {
+        if (this.ctx) {
+            if (this.ctx.state === 'suspended') {
+                this.ctx.resume();
+            }
+            return;
+        }
+
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        this.ctx = new AudioContextClass();
+
+        this.masterGain = this.ctx.createGain();
+        this.masterGain.gain.setValueAtTime(CONFIG.audio.masterVolume, this.ctx.currentTime);
+        this.masterGain.connect(this.ctx.destination);
+
+        this.distortionNode = this.ctx.createWaveShaper();
+        this.distortionNode.curve = this.makeDistortionCurve(CONFIG.audio.distortionAmount);
+        this.distortionNode.oversample = '4x';
+        this.distortionNode.connect(this.masterGain);
+
+        this.generateNoiseBuffer();
+        this.startSequencer();
+    }
+
+    makeDistortionCurve(amount) {
+        const k = amount;
+        const n_samples = 44100;
+        const curve = new Float32Array(n_samples);
+        const deg = Math.PI / 180;
+        for (let i = 0; i < n_samples; ++i) {
+            const x = (i * 2) / n_samples - 1;
+            curve[i] = ((3 + k) * x * 20 * deg) / (Math.PI + k * Math.abs(x));
+        }
+        return curve;
+    }
+
+    generateNoiseBuffer() {
+        const bufferSize = this.ctx.sampleRate;
+        this.noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+        const output = this.noiseBuffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+            output[i] = Math.random() * 2 - 1;
+        }
+    }
+
+    setPhase(phaseLevel) {
+        this.currentPhaseLevel = phaseLevel;
+    }
+
+    setMuffle(muffled) {
+        this.isMuffled = muffled;
+        if (this.masterGain && this.ctx) {
+            this.masterGain.gain.setTargetAtTime(muffled ? 0.08 : CONFIG.audio.masterVolume, this.ctx.currentTime, 0.03);
+        }
+    }
+
+    startSequencer() {
+        this.isPlaying = true;
+        this.nextStepTime = this.ctx.currentTime + 0.05;
+        this.currentStep = 0;
+
+        const scheduler = () => {
+            while (this.nextStepTime < this.ctx.currentTime + 0.1) {
+                this.scheduleStep(this.currentStep, this.nextStepTime);
+                this.nextStepTime += this.stepTime;
+                this.currentStep = (this.currentStep + 1) % 16;
+            }
+            if (this.isPlaying) {
+                this.timerID = setTimeout(scheduler, 25);
+            }
+        };
+        scheduler();
+    }
+
+    rewindToBeginning() {
+        if (!this.ctx) return;
+        clearTimeout(this.timerID);
+        this.setMuffle(false);
+        this.playTapeStop();
+
+        const restartDelay = 0.25;
+        this.nextStepTime = this.ctx.currentTime + restartDelay;
+        this.currentStep = 0;
+        this.currentPhaseLevel = 1;
+
+        this.isPlaying = true;
+        const scheduler = () => {
+            while (this.nextStepTime < this.ctx.currentTime + 0.1) {
+                this.scheduleStep(this.currentStep, this.nextStepTime);
+                this.nextStepTime += this.stepTime;
+                this.currentStep = (this.currentStep + 1) % 16;
+            }
+            if (this.isPlaying) {
+                this.timerID = setTimeout(scheduler, 25);
+            }
+        };
+        this.timerID = setTimeout(scheduler, restartDelay * 1000);
+    }
+
+    scheduleStep(step, time) {
+        if (this.isMuffled) return;
+
+        if (step % 4 === 0) {
+            this.playKick(time);
+            if (this.onBeat) {
+                const delayMs = Math.max(0, (time - this.ctx.currentTime) * 1000);
+                setTimeout(() => { if (this.onBeat) this.onBeat(); }, delayMs);
+            }
+        }
+
+        if (this.currentPhaseLevel >= 2 && (step === 4 || step === 12)) {
+            this.playSnare(time);
+        }
+
+        if (this.currentPhaseLevel >= 2) {
+            const isHighSpeed = this.currentPhaseLevel >= 3;
+            if (step % 2 === 0 || isHighSpeed) {
+                this.playHiHat(time, step % 4 !== 0, isHighSpeed && step % 2 !== 0);
+            }
+        }
+
+        const note = this.acidBassPattern[step];
+        this.playAcidBass(note, time, this.currentPhaseLevel === 1);
+
+        if (this.currentPhaseLevel >= 3) {
+            this.playArpeggio(this.arpPattern[step], time);
+        }
+
+        if (this.currentPhaseLevel >= 4 && this.chordStabs[step]) {
+            this.playChordStab(this.chordStabs[step], time);
+        }
+    }
+
+    playKick(time) {
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(155, time);
+        osc.frequency.exponentialRampToValueAtTime(30, time + 0.09);
+        gain.gain.setValueAtTime(1.1, time);
+        gain.gain.exponentialRampToValueAtTime(0.001, time + 0.16);
+        osc.connect(gain);
+        gain.connect(this.masterGain);
+        osc.start(time);
+        osc.stop(time + 0.17);
+    }
+
+    playSnare(time) {
+        if (!this.noiseBuffer) return;
+        const noise = this.ctx.createBufferSource();
+        noise.buffer = this.noiseBuffer;
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'bandpass';
+        filter.frequency.setValueAtTime(1800, time);
+        filter.Q.setValueAtTime(2.0, time);
+        const gain = this.ctx.createGain();
+        gain.gain.setValueAtTime(0.48, time);
+        gain.gain.exponentialRampToValueAtTime(0.001, time + 0.14);
+        noise.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.masterGain);
+        noise.start(time);
+        noise.stop(time + 0.15);
+    }
+
+    playHiHat(time, isOffbeat, is16th) {
+        if (!this.noiseBuffer) return;
+        const noise = this.ctx.createBufferSource();
+        noise.buffer = this.noiseBuffer;
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'highpass';
+        filter.frequency.setValueAtTime(is16th ? 9500 : 8000, time);
+        const gain = this.ctx.createGain();
+        const vol = is16th ? 0.16 : (isOffbeat ? 0.30 : 0.15);
+        gain.gain.setValueAtTime(vol, time);
+        gain.gain.exponentialRampToValueAtTime(0.001, time + 0.04);
+        noise.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.masterGain);
+        noise.start(time);
+        noise.stop(time + 0.045);
+    }
+
+    playAcidBass(note, time, isMuffled) {
+        const osc = this.ctx.createOscillator();
+        const filter = this.ctx.createBiquadFilter();
+        const gain = this.ctx.createGain();
+        const duration = this.stepTime * (note.accent ? 0.95 : 0.75);
+
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(note.freq, time);
+        filter.type = 'lowpass';
+
+        if (isMuffled) {
+            filter.Q.setValueAtTime(2.0, time);
+            filter.frequency.setValueAtTime(320, time);
+            gain.gain.setValueAtTime(note.accent ? 0.65 : 0.45, time);
+            osc.connect(filter);
+            filter.connect(gain);
+            gain.connect(this.masterGain);
+        } else {
+            filter.Q.setValueAtTime(9.0, time);
+            filter.frequency.setValueAtTime(note.cutoff, time);
+            filter.frequency.exponentialRampToValueAtTime(250, time + duration);
+            gain.gain.setValueAtTime(note.accent ? 0.6 : 0.4, time);
+            osc.connect(filter);
+            filter.connect(gain);
+            gain.connect(this.distortionNode);
+        }
+
+        gain.gain.exponentialRampToValueAtTime(0.001, time + duration);
+        osc.start(time);
+        osc.stop(time + duration);
+    }
+
+    playArpeggio(freq, time) {
+        const osc = this.ctx.createOscillator();
+        const filter = this.ctx.createBiquadFilter();
+        const gain = this.ctx.createGain();
+        const duration = this.stepTime * 0.8;
+
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(freq, time);
+        filter.type = 'bandpass';
+        filter.frequency.setValueAtTime(2800, time);
+        filter.Q.setValueAtTime(4.0, time);
+
+        gain.gain.setValueAtTime(0.24, time);
+        gain.gain.exponentialRampToValueAtTime(0.001, time + duration);
+        osc.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.masterGain);
+        osc.start(time);
+        osc.stop(time + duration);
+    }
+
+    playChordStab(chordFreqs, time) {
+        const duration = this.stepTime * 1.8;
+        chordFreqs.forEach((freq) => {
+            const osc = this.ctx.createOscillator();
+            const filter = this.ctx.createBiquadFilter();
+            const gain = this.ctx.createGain();
+
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(freq, time);
+            filter.type = 'lowpass';
+            filter.frequency.setValueAtTime(4000, time);
+            filter.frequency.exponentialRampToValueAtTime(800, time + duration);
+            filter.Q.setValueAtTime(6.0, time);
+
+            gain.gain.setValueAtTime(0.22, time);
+            gain.gain.exponentialRampToValueAtTime(0.001, time + duration);
+            osc.connect(filter);
+            filter.connect(gain);
+            gain.connect(this.distortionNode);
+            osc.start(time);
+            osc.stop(time + duration);
+        });
+    }
+
+    playWarningSE() {
+        if (!this.ctx) return;
+        const now = this.ctx.currentTime;
+        [880, 1760].forEach((freq, i) => {
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+            const t = now + i * 0.08;
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(freq, t);
+            gain.gain.setValueAtTime(0.4, t);
+            gain.gain.exponentialRampToValueAtTime(0.001, t + 0.07);
+            osc.connect(gain);
+            gain.connect(this.masterGain);
+            osc.start(t);
+            osc.stop(t + 0.075);
+        });
+    }
+
+    playUnfreezeSE() {
+        if (!this.ctx) return;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        const now = this.ctx.currentTime;
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(200, now);
+        osc.frequency.exponentialRampToValueAtTime(1400, now + 0.18);
+        gain.gain.setValueAtTime(0.5, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+        osc.connect(gain);
+        gain.connect(this.distortionNode);
+        osc.start(now);
+        osc.stop(now + 0.21);
+    }
+
+    playTapeStop() {
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        const now = this.ctx.currentTime;
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(280, now);
+        osc.frequency.exponentialRampToValueAtTime(15, now + 0.22);
+        gain.gain.setValueAtTime(0.7, now);
+        gain.gain.linearRampToValueAtTime(0.0, now + 0.24);
+        osc.connect(gain);
+        gain.connect(this.distortionNode);
+        osc.start(now);
+        osc.stop(now + 0.25);
+    }
+
+    playPaddleHit(offsetRatio) {
+        if (!this.ctx) return;
+        const normalized = (offsetRatio + 1) / 2;
+        const index = Math.min(5, Math.max(0, Math.floor(normalized * this.scaleFrequencies.length)));
+        const freq = this.scaleFrequencies[index];
+
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
+        gain.gain.setValueAtTime(0.5, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.15);
+        osc.connect(gain);
+        gain.connect(this.masterGain);
+        osc.start();
+        osc.stop(this.ctx.currentTime + 0.16);
+    }
+
+    playSmash() {
+        if (!this.ctx) return;
+        const notes = [440, 554.37, 659.25, 880];
+        notes.forEach((freq, idx) => {
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+            const t = this.ctx.currentTime + idx * 0.035;
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(freq, t);
+            gain.gain.setValueAtTime(0.4, t);
+            gain.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+            osc.connect(gain);
+            gain.connect(this.masterGain);
+            osc.start(t);
+            osc.stop(t + 0.19);
+        });
+    }
+
+    playWallHit() {
+        if (!this.ctx) return;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(164.81, this.ctx.currentTime);
+        gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.08);
+        osc.connect(gain);
+        gain.connect(this.masterGain);
+        osc.start();
+        osc.stop(this.ctx.currentTime + 0.09);
+    }
+
+    playShieldHit() {
+        if (!this.ctx) return;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        const now = this.ctx.currentTime;
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(320, now);
+        osc.frequency.exponentialRampToValueAtTime(80, now + 0.12);
+        gain.gain.setValueAtTime(0.6, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+        osc.connect(gain);
+        gain.connect(this.masterGain);
+        osc.start(now);
+        osc.stop(now + 0.16);
+    }
+
+    /** BOT切り替え通知SE */
+    playBotToggleSE(isOn) {
+        if (!this.ctx) return;
+        const now = this.ctx.currentTime;
+        const freq1 = isOn ? 587.33 : 880.00;
+        const freq2 = isOn ? 1174.66 : 440.00;
+
+        [freq1, freq2].forEach((freq, i) => {
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+            const t = now + i * 0.07;
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(freq, t);
+            gain.gain.setValueAtTime(0.35, t);
+            gain.gain.exponentialRampToValueAtTime(0.001, t + 0.06);
+            osc.connect(gain);
+            gain.connect(this.masterGain);
+            osc.start(t);
+            osc.stop(t + 0.065);
+        });
+    }
+
+    getBeatOffset() {
+        if (!this.ctx) return 999;
+        const beatInterval = 60 / this.tempo;
+        const now = this.ctx.currentTime;
+        const remainder = now % beatInterval;
+        return Math.min(remainder, beatInterval - remainder);
+    }
+}
+
+/**
+ * =============================================================================
+ * 3. 妨害技マネージャー (GlitchManager)
+ * =============================================================================
+ */
+class GlitchManager {
+    constructor(game) {
+        this.game = game;
+
+        this.vertigo = { active: false, currentAngle: 0, targetAngle: 0, timer: 0 };
+        this.timeFreeze = { active: false, timer: 0, primed: false };
+        this.gravity = { active: false, x: 400, y: 250, strength: 0.42, timer: 0, swirlAngle: 0 };
+        this.mirage = { active: false, decoys: [], timer: 0 };
+        this.blackout = { active: false, alpha: 0, timer: 0 };
+        this.shrink = { active: false, timer: 0 };
+
+        this.warningText = null;
+        this.warningTimer = 0;
+        this.cooldownBeats = 4;
+    }
+
+    onBeat() {
+        const phaseLevel = PHASES[this.game.currentPhaseIndex].level;
+        if (phaseLevel <= 1) return;
+
+        this.cooldownBeats--;
+        if (this.cooldownBeats <= 0) {
+            this.triggerRandomGlitch(phaseLevel);
+            this.cooldownBeats = phaseLevel >= 4 ? Math.floor(Math.random() * 3 + 4) : Math.floor(Math.random() * 4 + 6);
+        }
+    }
+
+    triggerRandomGlitch(phaseLevel) {
+        let pool = [];
+        if (phaseLevel === 2) {
+            pool = ['SHRINK', 'BLACKOUT', 'FREEZE'];
+        } else if (phaseLevel === 3) {
+            pool = ['VERTIGO', 'GRAVITY', 'MIRAGE', 'FREEZE', 'SHRINK'];
+        } else {
+            pool = ['VERTIGO', 'GRAVITY', 'MIRAGE', 'BLACKOUT', 'FREEZE', 'SHRINK'];
+        }
+
+        const pick = pool[Math.floor(Math.random() * pool.length)];
+        this.activateGlitch(pick);
+
+        if (phaseLevel >= 4 && Math.random() < 0.65) {
+            const secondPool = pool.filter(p => p !== pick);
+            const secondPick = secondPool[Math.floor(Math.random() * secondPool.length)];
+            setTimeout(() => { this.activateGlitch(secondPick, true); }, 150);
+        }
+    }
+
+    activateGlitch(type, isSecondary = false) {
+        if (!isSecondary) {
+            this.showWarning(type);
+            this.game.sound.playWarningSE();
+        }
+
+        switch (type) {
+            case 'VERTIGO':
+                this.vertigo.active = true;
+                const angles = [Math.PI, -Math.PI, Math.PI / 4, -Math.PI / 4];
+                this.vertigo.targetAngle = angles[Math.floor(Math.random() * angles.length)];
+                this.vertigo.timer = 240;
+                break;
+
+            case 'FREEZE':
+                this.timeFreeze.primed = true;
+                this.timeFreeze.timer = 280;
+                break;
+
+            case 'GRAVITY':
+                this.gravity.active = true;
+                this.gravity.timer = 300;
+                break;
+
+            case 'MIRAGE':
+                this.mirage.active = true;
+                this.mirage.timer = 240;
+                this.spawnMirageDecoys();
+                break;
+
+            case 'BLACKOUT':
+                this.blackout.active = true;
+                this.blackout.timer = 220;
+                break;
+
+            case 'SHRINK':
+                this.shrink.active = true;
+                this.shrink.timer = 260;
+                break;
+        }
+    }
+
+    showWarning(type) {
+        const names = {
+            VERTIGO: 'WARNING: [VERTIGO] ROLL & FLIP',
+            FREEZE: 'WARNING: [THE WORLD] TIME FREEZE',
+            GRAVITY: 'WARNING: [GRAVITY WARP] BLACK HOLE',
+            MIRAGE: 'WARNING: [MIRAGE] ILLUSION SPLIT',
+            BLACKOUT: 'WARNING: [BLACKOUT] VISUAL JAMMER',
+            SHRINK: 'WARNING: [SHRINK RAY] PADDLE COMPRESS'
+        };
+        this.warningText = names[type] || 'WARNING: GLITCH DETECTED';
+        this.warningTimer = 45;
+    }
+
+    spawnMirageDecoys() {
+        this.mirage.decoys = [];
+        const ball = this.game.ball;
+        [-0.32, 0.32].forEach((offsetAngle) => {
+            const decoy = {
+                x: ball.x,
+                y: ball.y,
+                size: ball.baseSize,
+                vx: ball.vx * Math.cos(offsetAngle) - ball.vy * Math.sin(offsetAngle),
+                vy: ball.vx * Math.sin(offsetAngle) + ball.vy * Math.cos(offsetAngle),
+                trail: []
+            };
+            this.mirage.decoys.push(decoy);
+        });
+    }
+
+    update() {
+        if (this.warningTimer > 0) this.warningTimer--;
+
+        // 1. VERTIGO
+        if (this.vertigo.active) {
+            this.vertigo.currentAngle += (this.vertigo.targetAngle - this.vertigo.currentAngle) * 0.08;
+            this.vertigo.timer--;
+            if (this.vertigo.timer <= 0) {
+                this.vertigo.targetAngle = 0;
+                if (Math.abs(this.vertigo.currentAngle) < 0.02) {
+                    this.vertigo.currentAngle = 0;
+                    this.vertigo.active = false;
+                }
+            }
+        }
+
+        // 2. TIME FREEZE
+        const ball = this.game.ball;
+        if (this.timeFreeze.primed && !this.timeFreeze.active) {
+            if (ball.vx < 0 && ball.x < 320 && ball.x > 180) {
+                this.timeFreeze.active = true;
+                this.timeFreeze.primed = false;
+                this.timeFreeze.timer = 45;
+                this.game.sound.setMuffle(true);
+            }
+        }
+        if (this.timeFreeze.active) {
+            this.timeFreeze.timer--;
+            if (this.timeFreeze.timer <= 0) {
+                this.timeFreeze.active = false;
+                this.game.sound.setMuffle(false);
+                this.game.sound.playUnfreezeSE();
+                ball.vx *= 1.45;
+                ball.vy *= 1.45;
+                this.game.triggerScreenShake(12);
+            }
+        }
+
+        // 3. GRAVITY WARP
+        if (this.gravity.active) {
+            this.gravity.swirlAngle += 0.12;
+            const dx = this.gravity.x - ball.x;
+            const dy = this.gravity.y - ball.y;
+            const dist = Math.hypot(dx, dy);
+            if (dist > 15) {
+                ball.vx += (dx / dist) * this.gravity.strength;
+                ball.vy += (dy / dist) * this.gravity.strength;
+            }
+            this.gravity.timer--;
+            if (this.gravity.timer <= 0) this.gravity.active = false;
+        }
+
+        // 4. MIRAGE
+        if (this.mirage.active) {
+            this.mirage.decoys.forEach((decoy) => {
+                decoy.trail.unshift({ x: decoy.x, y: decoy.y });
+                if (decoy.trail.length > 8) decoy.trail.pop();
+                decoy.x += decoy.vx;
+                decoy.y += decoy.vy;
+
+                if (decoy.y <= 0 || decoy.y + decoy.size >= CONFIG.canvas.height) {
+                    decoy.vy = -decoy.vy;
+                }
+            });
+
+            this.mirage.timer--;
+            if (this.mirage.timer <= 0) {
+                this.mirage.active = false;
+                this.mirage.decoys = [];
+            }
+        }
+
+        // 5. BLACKOUT
+        if (this.blackout.active) {
+            this.blackout.alpha = Math.min(0.96, this.blackout.alpha + 0.05);
+            this.blackout.timer--;
+            if (this.blackout.timer <= 0) {
+                this.blackout.active = false;
+            }
+        } else {
+            this.blackout.alpha = Math.max(0, this.blackout.alpha - 0.05);
+        }
+
+        // 6. SHRINK RAY
+        if (this.shrink.active) {
+            const targetH = CONFIG.paddle.shrinkHeight;
+            this.game.player.height += (targetH - this.game.player.height) * 0.12;
+            this.shrink.timer--;
+            if (this.shrink.timer <= 0) {
+                this.shrink.active = false;
+            }
+        } else {
+            const normalH = CONFIG.paddle.normalHeight;
+            this.game.player.height += (normalH - this.game.player.height) * 0.12;
+        }
+    }
+
+    resetAll() {
+        this.vertigo = { active: false, currentAngle: 0, targetAngle: 0, timer: 0 };
+        this.timeFreeze = { active: false, timer: 0, primed: false };
+        this.gravity = { active: false, x: 400, y: 250, strength: 0.42, timer: 0, swirlAngle: 0 };
+        this.mirage = { active: false, decoys: [], timer: 0 };
+        this.blackout = { active: false, alpha: 0, timer: 0 };
+        this.shrink = { active: false, timer: 0 };
+        this.warningTimer = 0;
+        this.warningText = null;
+        this.cooldownBeats = 4;
+        this.game.sound.setMuffle(false);
+        this.game.player.height = CONFIG.paddle.normalHeight;
+    }
+}
+
+/**
+ * =============================================================================
+ * 4. 入力ハンドラ (InputHandler) - BOTトグル＆トリプルタップ検知
+ * =============================================================================
  */
 class InputHandler {
-    constructor() {
+    constructor(canvas, game, onUserAction) {
+        this.canvas = canvas;
+        this.game = game;
+        this.onUserAction = onUserAction;
         this.keys = new Set();
+        this.touchY = null;
+
+        // 右上トリプルタップ判定用
+        this.topRightTapTimes = [];
 
         window.addEventListener('keydown', (e) => {
-            this.keys.add(e.code);
-            // ゲーム画面スクロール防止
-            if (['ArrowUp', 'ArrowDown', 'Space'].includes(e.code)) {
-                e.preventDefault();
+            if (this.onUserAction) this.onUserAction();
+
+            // [B] キーでオートBOTトグル
+            if (e.code === 'KeyB') {
+                this.game.toggleBot();
+                return;
             }
+
+            this.keys.add(e.code);
+            if (['ArrowUp', 'ArrowDown', 'Space'].includes(e.code)) e.preventDefault();
         });
 
         window.addEventListener('keyup', (e) => {
             this.keys.delete(e.code);
         });
+
+        const handleTouch = (e) => {
+            if (this.onUserAction) this.onUserAction();
+            if (e.touches.length > 0) {
+                e.preventDefault();
+                const touch = e.touches[0];
+                this.touchY = this.calculateRotatedCanvasY(touch.clientX, touch.clientY);
+            }
+        };
+
+        this.canvas.addEventListener('touchstart', (e) => {
+            if (e.touches.length > 0) {
+                const touch = e.touches[0];
+                this.checkTopRightTripleTap(touch.clientX, touch.clientY);
+            }
+            handleTouch(e);
+        }, { passive: false });
+
+        this.canvas.addEventListener('touchmove', handleTouch, { passive: false });
+        this.canvas.addEventListener('touchend', (e) => {
+            if (e.touches.length === 0) this.touchY = null;
+        });
+        this.canvas.addEventListener('touchcancel', () => { this.touchY = null; });
+        this.canvas.addEventListener('click', () => {
+            if (this.onUserAction) this.onUserAction();
+        });
     }
 
-    /** 上方向の入力があるか */
-    isUp() {
-        return this.keys.has('KeyW') || this.keys.has('ArrowUp');
+    /** 画面右上（AIスコア表示エリア付近）のトリプルタップ判定 */
+    checkTopRightTripleTap(clientX, clientY) {
+        const rect = this.canvas.getBoundingClientRect();
+        const scaleX = this.canvas.width / rect.width;
+        const scaleY = this.canvas.height / rect.height;
+        const rawX = (clientX - rect.left) * scaleX;
+        const rawY = (clientY - rect.top) * scaleY;
+
+        // 画面右上（幅65%以上、高さ110px以内）
+        if (rawX > this.canvas.width * 0.65 && rawY < 110) {
+            const now = Date.now();
+            this.topRightTapTimes.push(now);
+
+            // 直近3回を保持
+            if (this.topRightTapTimes.length > 3) {
+                this.topRightTapTimes.shift();
+            }
+
+            // 550ms以内に3回タップされたらトリプルタップ成立
+            if (this.topRightTapTimes.length === 3) {
+                const elapsed = now - this.topRightTapTimes[0];
+                if (elapsed <= 550) {
+                    this.topRightTapTimes = [];
+                    this.game.toggleBot();
+                }
+            }
+        }
     }
 
-    /** 下方向の入力があるか */
-    isDown() {
-        return this.keys.has('KeyS') || this.keys.has('ArrowDown');
+    calculateRotatedCanvasY(clientX, clientY) {
+        const rect = this.canvas.getBoundingClientRect();
+        if (rect.height === 0) return 0;
+
+        const scaleX = this.canvas.width / rect.width;
+        const scaleY = this.canvas.height / rect.height;
+
+        const rawX = (clientX - rect.left) * scaleX;
+        const rawY = (clientY - rect.top) * scaleY;
+
+        const angle = this.game.glitch.vertigo.currentAngle;
+        if (Math.abs(angle) < 0.001) return rawY;
+
+        const cx = this.canvas.width / 2;
+        const cy = this.canvas.height / 2;
+        const dx = rawX - cx;
+        const dy = rawY - cy;
+
+        const cos = Math.cos(-angle);
+        const sin = Math.sin(-angle);
+        return dx * sin + dy * cos + cy;
     }
 
-    /** スペースキー（リスタートなど）が押されているか */
-    isSpace() {
-        return this.keys.has('Space');
-    }
+    isUp() { return this.keys.has('KeyW') || this.keys.has('ArrowUp'); }
+    isDown() { return this.keys.has('KeyS') || this.keys.has('ArrowDown'); }
 }
 
 /**
  * =============================================================================
- * 3. パドルクラス (Paddle)
+ * 5. パドルクラス (Player & AbsoluteDefenseAI)
  * =============================================================================
  */
-class Paddle {
-    constructor(x, y, width, height, speed, color) {
-        this.startX = x;
-        this.startY = y;
+class PlayerPaddle {
+    constructor(x, y, width, height, speed) {
         this.x = x;
         this.y = y;
         this.width = width;
         this.height = height;
         this.speed = speed;
-        this.color = color;
-        this.score = 0;
+        this.pulse = 0;
     }
 
-    /** 上下移動の更新（0: 停止, -1: 上, 1: 下） */
     update(direction, canvasHeight) {
         this.y += direction * this.speed;
-
-        // 壁との衝突（画面外にはみ出さないように制限）
-        if (this.y < 0) {
-            this.y = 0;
-        } else if (this.y + this.height > canvasHeight) {
-            this.y = canvasHeight - this.height;
-        }
+        this.clampBounds(canvasHeight);
+        this.pulse *= 0.88;
     }
 
-    /** 描画処理 */
-    draw(ctx) {
-        ctx.fillStyle = this.color;
+    moveTo(targetCenterY, canvasHeight, lerp = 1.0) {
+        const targetTopY = targetCenterY - this.height / 2;
+        this.y += (targetTopY - this.y) * lerp;
+        this.clampBounds(canvasHeight);
+        this.pulse *= 0.88;
+    }
+
+    clampBounds(canvasHeight) {
+        if (this.y < 0) this.y = 0;
+        else if (this.y + this.height > canvasHeight) this.y = canvasHeight - this.height;
+    }
+
+    draw(ctx, activeColor, activeGlow, isBotActive = false) {
+        ctx.save();
+        ctx.shadowColor = isBotActive ? '#ffea00' : activeGlow;
+        ctx.shadowBlur = 10 + this.pulse * 25;
+
+        ctx.fillStyle = isBotActive ? '#ffea00' : activeColor;
+        const extraWidth = this.pulse * 4;
+        ctx.fillRect(this.x - extraWidth / 2, this.y, this.width + extraWidth, this.height);
+
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(this.x + 3, this.y + 4, this.width - 6, this.height - 8);
+        ctx.restore();
+    }
+}
+
+class AbsoluteDefenseAI {
+    constructor(x, y, width, height) {
+        this.x = x;
+        this.y = y;
+        this.width = width;
+        this.height = height;
+        this.shieldPulse = 0;
+    }
+
+    trackBall(ball, canvasHeight) {
+        this.y = (ball.y + ball.baseSize / 2) - (this.height / 2);
+        this.clampBounds(canvasHeight);
+        this.shieldPulse *= 0.90;
+    }
+
+    clampBounds(canvasHeight) {
+        if (this.y < 0) this.y = 0;
+        else if (this.y + this.height > canvasHeight) this.y = canvasHeight - this.height;
+    }
+
+    triggerShield() {
+        this.shieldPulse = 1.0;
+    }
+
+    draw(ctx, beatPulse) {
+        ctx.save();
+        const glow = 15 + this.shieldPulse * 35 + beatPulse * 15;
+        ctx.shadowColor = '#ff0055';
+        ctx.shadowBlur = glow;
+
+        ctx.strokeStyle = '#ff0055';
+        ctx.lineWidth = 3 + this.shieldPulse * 3;
+        ctx.strokeRect(this.x - 2, this.y - 2, this.width + 4, this.height + 4);
+
+        ctx.fillStyle = 'rgba(255, 0, 85, 0.85)';
         ctx.fillRect(this.x, this.y, this.width, this.height);
-    }
 
-    /** リセット処理 */
-    reset() {
-        this.y = this.startY;
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(this.x + 4, this.y + 6, this.width - 8, this.height - 12);
+
+        if (this.shieldPulse > 0.05) {
+            ctx.strokeStyle = `rgba(255, 0, 85, ${this.shieldPulse})`;
+            ctx.lineWidth = 2;
+            const radius = (1 - this.shieldPulse) * 45 + 10;
+            ctx.beginPath();
+            ctx.arc(this.x, this.y + this.height / 2, radius, -Math.PI / 2, Math.PI / 2);
+            ctx.stroke();
+        }
+        ctx.restore();
     }
 }
 
 /**
  * =============================================================================
- * 4. ボールクラス (Ball)
+ * 6. ボールクラス (Ball)
  * =============================================================================
  */
 class Ball {
-    constructor(size, color) {
-        this.size = size;
-        this.color = color;
+    constructor(size) {
+        this.baseSize = size;
         this.x = 0;
         this.y = 0;
         this.vx = 0;
         this.vy = 0;
         this.speed = CONFIG.ball.initialSpeed;
+        this.isSmash = false;
+        this.trail = [];
     }
 
-    /** ボールを中央にリセットし、指定方向（1: 右, -1: 左）へ射出 */
     reset(canvasWidth, canvasHeight, direction = 1) {
-        this.x = canvasWidth / 2 - this.size / 2;
-        this.y = canvasHeight / 2 - this.size / 2;
+        this.x = canvasWidth / 2 - this.baseSize / 2;
+        this.y = canvasHeight / 2 - this.baseSize / 2;
         this.speed = CONFIG.ball.initialSpeed;
+        this.isSmash = false;
+        this.trail = [];
 
-        // 発射角度をランダムに決定（-30度 〜 +30度）
         const angle = (Math.random() * Math.PI / 3) - (Math.PI / 6);
         this.vx = direction * this.speed * Math.cos(angle);
         this.vy = this.speed * Math.sin(angle);
     }
 
-    /** 位置の更新 */
-    update() {
-        this.x += this.vx;
-        this.y += this.vy;
+    update(maxTrailLength, isFrozen = false) {
+        if (!isFrozen) {
+            this.trail.unshift({ x: this.x, y: this.y, isSmash: this.isSmash });
+            if (this.trail.length > maxTrailLength) {
+                this.trail.pop();
+            }
+            this.x += this.vx;
+            this.y += this.vy;
+        }
     }
 
-    /** 描画処理 */
-    draw(ctx) {
-        ctx.fillStyle = this.color;
-        ctx.fillRect(this.x, this.y, this.size, this.size);
+    draw(ctx, beatPulse, activeColor) {
+        ctx.save();
+        this.trail.forEach((point, idx) => {
+            const alpha = 1 - (idx / this.trail.length);
+            ctx.fillStyle = point.isSmash ? `rgba(255, 0, 85, ${alpha * 0.7})` : `${activeColor}${Math.floor(alpha * 100).toString(16).padStart(2, '0')}`;
+            const size = this.baseSize * (1 - (idx / this.trail.length) * 0.4);
+            ctx.fillRect(point.x, point.y, size, size);
+        });
+
+        const currentSize = this.baseSize * (1 + beatPulse * 0.35);
+        const offset = (currentSize - this.baseSize) / 2;
+
+        ctx.shadowColor = this.isSmash ? '#ff0033' : activeColor;
+        ctx.shadowBlur = this.isSmash ? 30 : 12 + beatPulse * 18;
+        ctx.fillStyle = this.isSmash ? '#ff99aa' : '#ffffff';
+
+        ctx.fillRect(this.x - offset, this.y - offset, currentSize, currentSize);
+        ctx.restore();
     }
 }
 
 /**
  * =============================================================================
- * 5. ゲーム本体クラス (Game)
+ * 7. パーティクル & フローティングテキスト
+ * =============================================================================
+ */
+class Particle {
+    constructor(x, y, vx, vy, color, size, life) {
+        this.x = x;
+        this.y = y;
+        this.vx = vx;
+        this.vy = vy;
+        this.color = color;
+        this.size = size;
+        this.life = life;
+        this.maxLife = life;
+    }
+
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.life -= 1;
+    }
+
+    draw(ctx) {
+        const alpha = Math.max(0, this.life / this.maxLife);
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = this.color;
+        ctx.shadowColor = this.color;
+        ctx.shadowBlur = 8;
+        ctx.fillRect(this.x - this.size / 2, this.y - this.size / 2, this.size, this.size);
+        ctx.restore();
+    }
+}
+
+class FloatingText {
+    constructor(text, x, y, color, size = 22, maxLife = 40) {
+        this.text = text;
+        this.x = x;
+        this.y = y;
+        this.color = color;
+        this.size = size;
+        this.life = maxLife;
+        this.maxLife = maxLife;
+    }
+
+    update() {
+        this.y -= 1.0;
+        this.life -= 1;
+    }
+
+    draw(ctx) {
+        const alpha = Math.max(0, this.life / this.maxLife);
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = this.color;
+        ctx.shadowColor = this.color;
+        ctx.shadowBlur = 12;
+        ctx.font = `bold ${this.size}px ${CONFIG.game.fontFamily}`;
+        ctx.textAlign = 'center';
+        ctx.fillText(this.text, this.x, this.y);
+        ctx.restore();
+    }
+}
+
+/**
+ * =============================================================================
+ * 8. ゲーム本体クラス (Game)
  * =============================================================================
  */
 class Game {
     constructor(canvasId) {
         this.canvas = document.getElementById(canvasId);
         this.ctx = this.canvas.getContext('2d');
+        this.instructionEl = document.getElementById('instructionText');
 
         this.canvas.width = CONFIG.canvas.width;
         this.canvas.height = CONFIG.canvas.height;
 
-        this.input = new InputHandler();
+        this.sound = new SoundEngine();
+        this.glitch = new GlitchManager(this);
 
-        // プレイヤーとAIパドルの初期化
-        this.player = new Paddle(
+        this.beatPulse = 0;
+        this.sound.onBeat = () => {
+            this.beatPulse = 1.0;
+            this.glitch.onBeat();
+        };
+
+        this.input = new InputHandler(this.canvas, this, () => {
+            this.sound.init();
+        });
+
+        this.player = new PlayerPaddle(
             CONFIG.paddle.offsetFromWall,
-            (this.canvas.height - CONFIG.paddle.height) / 2,
+            (this.canvas.height - CONFIG.paddle.normalHeight) / 2,
             CONFIG.paddle.width,
-            CONFIG.paddle.height,
-            CONFIG.paddle.speed,
-            CONFIG.colors.player
+            CONFIG.paddle.normalHeight,
+            CONFIG.paddle.speed
         );
 
-        this.ai = new Paddle(
-            this.canvas.width - CONFIG.paddle.offsetFromWall - CONFIG.paddle.width,
-            (this.canvas.height - CONFIG.paddle.height) / 2,
-            CONFIG.paddle.width,
-            CONFIG.paddle.height,
-            CONFIG.ai.speed,
-            CONFIG.colors.ai
+        this.ai = new AbsoluteDefenseAI(
+            this.canvas.width - CONFIG.ai.offsetFromWall - CONFIG.ai.width,
+            (this.canvas.height - CONFIG.ai.height) / 2,
+            CONFIG.ai.width,
+            CONFIG.ai.height
         );
 
-        this.ball = new Ball(CONFIG.ball.size, CONFIG.colors.ball);
-        this.state = 'PLAYING'; // 'PLAYING' | 'GAME_OVER'
-        this.winner = null;
+        this.ball = new Ball(CONFIG.ball.size);
 
-        // ボール初期発射
+        this.currentRally = 0;
+        this.maxRally = 0;
+        this.currentPhaseIndex = 0;
+
+        // 【新機能】隠しオートプレイBOT状態
+        this.autoBot = false;
+
+        this.particles = [];
+        this.floatingTexts = [];
+        this.shakeTimer = 0;
+        this.glitchTimer = 0;
+
         this.ball.reset(this.canvas.width, this.canvas.height, 1);
+        this.updatePhase(0, true);
     }
 
-    // -------------------------------------------------------------------------
-    // イベントフック群
-    // （効果音の再生、パーティクルの生成、ルール追加などの拡張ポイント）
-    // -------------------------------------------------------------------------
+    /** オートBOTのON/OFF切り替え */
+    toggleBot() {
+        this.autoBot = !this.autoBot;
+        this.sound.playBotToggleSE(this.autoBot);
 
-    /** ボールがパドルに当たった時 */
-    onBallHitPaddle(ball, paddle, hitOffsetRatio) {
-        // ヒット位置に応じた反射角の計算（中央なら0度、端に行くほど急角度）
-        const bounceAngle = hitOffsetRatio * CONFIG.ball.maxBounceAngle;
-
-        // 加速
-        ball.speed = Math.min(ball.speed * CONFIG.ball.speedIncrement, CONFIG.ball.maxSpeed);
-
-        const direction = (paddle === this.player) ? 1 : -1;
-        ball.vx = direction * ball.speed * Math.cos(bounceAngle);
-        ball.vy = ball.speed * Math.sin(bounceAngle);
-
-        /* [改造ポイント]: ここでパドルヒット時のSE再生や画面揺れエフェクトを追加可能 */
+        const text = this.autoBot ? 'AUTO BOT: ACTIVATED' : 'AUTO BOT: DEACTIVATED';
+        const color = this.autoBot ? '#ffea00' : '#888888';
+        this.floatingTexts.push(new FloatingText(text, this.canvas.width / 2, this.canvas.height / 2 + 50, color, 24, 45));
     }
 
-    /** ボールが上下の壁に当たった時 */
-    onBallHitWall(ball, wall) {
-        ball.vy = -ball.vy;
-
-        /* [改造ポイント]: ここで壁反射のSE再生を追加可能 */
+    getPhaseIndex(rally) {
+        for (let i = PHASES.length - 1; i >= 0; i--) {
+            if (rally >= PHASES[i].minRally) return i;
+        }
+        return 0;
     }
 
-    /** 誰かが得点した時 */
-    onScore(scorer) {
-        scorer.score++;
+    updatePhase(newIndex, silent = false) {
+        const prevIndex = this.currentPhaseIndex;
+        this.currentPhaseIndex = newIndex;
+        const phase = PHASES[newIndex];
 
-        // 勝利判定
-        if (scorer.score >= CONFIG.game.winningScore) {
-            this.onGameOver(scorer === this.player ? 'PLAYER' : 'AI');
-        } else {
-            // 得点された側にボールをサーブ
-            const nextDirection = (scorer === this.player) ? -1 : 1;
-            this.ball.reset(this.canvas.width, this.canvas.height, nextDirection);
+        this.sound.setPhase(phase.level);
+
+        this.canvas.style.borderColor = phase.color;
+        this.canvas.style.boxShadow = `0 0 30px ${phase.glow}`;
+        this.instructionEl.style.color = phase.color;
+
+        if (!silent && newIndex > prevIndex) {
+            this.triggerScreenShake(14);
+            this.floatingTexts.push(new FloatingText(phase.name, this.canvas.width / 2, this.canvas.height / 2 - 20, phase.color, 32, 55));
+            this.floatingTexts.push(new FloatingText(phase.subtext, this.canvas.width / 2, this.canvas.height / 2 + 20, '#ffffff', 16, 55));
+            this.spawnParticles(this.canvas.width / 2, this.canvas.height / 2, 45, phase.color, 6.5);
+            this.sound.playSmash();
+        }
+    }
+
+    onBallHitPlayer(ball, hitOffsetRatio, isBotAction = false) {
+        this.player.pulse = 1.0;
+        this.currentRally++;
+        if (this.currentRally > this.maxRally) {
+            this.maxRally = this.currentRally;
         }
 
-        /* [改造ポイント]: 得点時の歓声や点滅演出を追加可能 */
-    }
+        const targetPhaseIndex = this.getPhaseIndex(this.currentRally);
+        if (targetPhaseIndex !== this.currentPhaseIndex) {
+            this.updatePhase(targetPhaseIndex);
+        }
 
-    /** ゲーム終了時 */
-    onGameOver(winner) {
-        this.state = 'GAME_OVER';
-        this.winner = winner;
-    }
+        const beatOffset = this.sound.getBeatOffset();
+        let isPerfect = beatOffset <= CONFIG.rhythm.perfectWindow;
+        let isGreat = !isPerfect && beatOffset <= CONFIG.rhythm.greatWindow;
+        const phase = PHASES[this.currentPhaseIndex];
 
-    /** ゲームリセット */
-    restart() {
-        this.player.score = 0;
-        this.ai.score = 0;
-        this.player.reset();
-        this.ai.reset();
-        this.winner = null;
-        this.state = 'PLAYING';
-        this.ball.reset(this.canvas.width, this.canvas.height, 1);
-    }
-
-    // -------------------------------------------------------------------------
-    // ロジック更新
-    // -------------------------------------------------------------------------
-
-    /** AIの思考・操作更新 */
-    updateAI() {
-        // パドル中央とボール中心のY座標差分
-        const paddleCenterY = this.ai.y + this.ai.height / 2;
-        const ballCenterY = this.ball.y + this.ball.size / 2;
-        const diff = ballCenterY - paddleCenterY;
-
-        // 遊び（不感帯）を持たせて小刻みな震えを抑止
-        if (Math.abs(diff) > CONFIG.ai.predictionError) {
-            if (diff > 0) {
-                this.ai.update(1, this.canvas.height);
+        // BOT迎撃時は高確率でPERFECT SMASHを炸裂させて鑑賞演出を最適化
+        if (isBotAction) {
+            if (Math.random() < 0.85) {
+                isPerfect = true;
+                isGreat = false;
             } else {
-                this.ai.update(-1, this.canvas.height);
+                isPerfect = false;
+                isGreat = true;
             }
         }
+
+        if (isPerfect || isGreat) {
+            ball.isSmash = true;
+            ball.speed = Math.min(ball.speed * CONFIG.rhythm.smashMultiplier, CONFIG.ball.maxSpeed);
+
+            this.sound.playSmash();
+            this.triggerScreenShake(9);
+
+            const text = isPerfect ? 'PERFECT!! SMASH' : 'GREAT! SMASH';
+            const color = isPerfect ? '#ff0055' : phase.color;
+            this.floatingTexts.push(new FloatingText(text, ball.x, ball.y - 15, color, 22, 35));
+            this.spawnParticles(ball.x, ball.y, 25, color, 5.0);
+        } else {
+            ball.isSmash = false;
+            ball.speed = Math.min(ball.speed * CONFIG.ball.speedIncrement, CONFIG.ball.maxSpeed);
+            this.sound.playPaddleHit(hitOffsetRatio);
+            this.spawnParticles(ball.x, ball.y, 8, phase.color, 2.5);
+        }
+
+        const bounceAngle = hitOffsetRatio * CONFIG.ball.maxBounceAngle;
+        ball.vx = ball.speed * Math.cos(bounceAngle);
+        ball.vy = ball.speed * Math.sin(bounceAngle);
     }
 
-    /** 衝突判定 */
-    checkCollisions() {
+    onBallHitAI(ball) {
+        this.ai.triggerShield();
+        this.sound.playShieldHit();
+        this.spawnParticles(ball.x, ball.y, 16, '#ff0055', 4.0);
+
+        const hitOffsetRatio = ((ball.y + ball.baseSize / 2) - (this.ai.y + this.ai.height / 2)) / (this.ai.height / 2);
+        const bounceAngle = hitOffsetRatio * (CONFIG.ball.maxBounceAngle * 0.7);
+
+        ball.speed = Math.min(ball.speed * CONFIG.ball.speedIncrement, CONFIG.ball.maxSpeed);
+        ball.isSmash = false;
+        ball.vx = -ball.speed * Math.cos(bounceAngle);
+        ball.vy = ball.speed * Math.sin(bounceAngle);
+    }
+
+    onBallHitWall(ball, wall) {
+        ball.vy = -ball.vy;
+        this.sound.playWallHit();
+        this.spawnParticles(ball.x, ball.y, 6, '#ffffff', 2.0);
+    }
+
+    onPlayerMiss() {
+        this.currentRally = 0;
+        this.triggerScreenShake(16);
+        this.glitchTimer = 16;
+
+        this.floatingTexts.push(new FloatingText('SYSTEM PURGED - GLITCHES RESET', this.canvas.width / 2, this.canvas.height / 2, '#ff0033', 24, 50));
+
+        this.glitch.resetAll();
+        this.updatePhase(0, true);
+        this.sound.rewindToBeginning();
+
+        this.ball.reset(this.canvas.width, this.canvas.height, -1);
+    }
+
+    triggerScreenShake(frames) {
+        this.shakeTimer = frames;
+    }
+
+    spawnParticles(x, y, count, color, maxSpeed) {
+        for (let i = 0; i < count; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const spd = (Math.random() * 0.7 + 0.3) * maxSpeed;
+            this.particles.push(new Particle(
+                x, y,
+                Math.cos(angle) * spd,
+                Math.sin(angle) * spd,
+                color,
+                Math.random() * 4 + 2,
+                Math.floor(Math.random() * 18 + 12)
+            ));
+        }
+    }
+
+    checkCollisions(isBotAction = false) {
         const ball = this.ball;
 
-        // 1. 上下の壁との衝突
         if (ball.y <= 0) {
             ball.y = 0;
             this.onBallHitWall(ball, 'TOP');
-        } else if (ball.y + ball.size >= this.canvas.height) {
-            ball.y = this.canvas.height - ball.size;
+        } else if (ball.y + ball.baseSize >= this.canvas.height) {
+            ball.y = this.canvas.height - ball.baseSize;
             this.onBallHitWall(ball, 'BOTTOM');
         }
 
-        // 2. プレイヤーパドルとの衝突判定 (AABB)
         if (
             ball.x <= this.player.x + this.player.width &&
-            ball.x + ball.size >= this.player.x &&
-            ball.y + ball.size >= this.player.y &&
+            ball.x + ball.baseSize >= this.player.x &&
+            ball.y + ball.baseSize >= this.player.y &&
             ball.y <= this.player.y + this.player.height &&
             ball.vx < 0
         ) {
-            ball.x = this.player.x + this.player.width; // めり込み防止
-            // パドル中央を0とした -1.0 〜 1.0 の正規化ヒット位置
-            const hitOffsetRatio = ((ball.y + ball.size / 2) - (this.player.y + this.player.height / 2)) / (this.player.height / 2);
-            this.onBallHitPaddle(ball, this.player, Math.max(-1, Math.min(1, hitOffsetRatio)));
+            ball.x = this.player.x + this.player.width;
+            const hitOffsetRatio = ((ball.y + ball.baseSize / 2) - (this.player.y + this.player.height / 2)) / (this.player.height / 2);
+            this.onBallHitPlayer(ball, Math.max(-1, Math.min(1, hitOffsetRatio)), isBotAction);
         }
 
-        // 3. AIパドルとの衝突判定 (AABB)
         if (
-            ball.x + ball.size >= this.ai.x &&
+            ball.x + ball.baseSize >= this.ai.x &&
             ball.x <= this.ai.x + this.ai.width &&
-            ball.y + ball.size >= this.ai.y &&
+            ball.y + ball.baseSize >= this.ai.y &&
             ball.y <= this.ai.y + this.ai.height &&
             ball.vx > 0
         ) {
-            ball.x = this.ai.x - ball.size; // めり込み防止
-            const hitOffsetRatio = ((ball.y + ball.size / 2) - (this.ai.y + this.ai.height / 2)) / (this.ai.height / 2);
-            this.onBallHitPaddle(ball, this.ai, Math.max(-1, Math.min(1, hitOffsetRatio)));
+            ball.x = this.ai.x - ball.baseSize;
+            this.onBallHitAI(ball);
         }
 
-        // 4. 得点判定（左右の壁を通過）
-        if (ball.x + ball.size < 0) {
-            this.onScore(this.ai);
-        } else if (ball.x > this.canvas.width) {
-            this.onScore(this.player);
+        if (ball.x + ball.baseSize < 0) {
+            this.onPlayerMiss();
+        }
+
+        if (ball.x > this.canvas.width) {
+            ball.x = this.ai.x - ball.baseSize;
+            this.onBallHitAI(ball);
         }
     }
 
-    /** 状態の更新 */
     update() {
-        if (this.state === 'GAME_OVER') {
-            if (this.input.isSpace()) {
-                this.restart();
+        this.beatPulse *= 0.88;
+        const currentPhase = PHASES[this.currentPhaseIndex];
+
+        this.glitch.update();
+
+        // プレイヤー手動入力の有無をチェック
+        const hasManualInput = (this.input.touchY !== null) || this.input.isUp() || this.input.isDown();
+        const isBotHandling = this.autoBot && !hasManualInput;
+
+        if (isBotHandling) {
+            // 【BOT自動操縦】本物のボールのY座標を100%完全追従（絶対ノーミス迎撃）
+            const targetCenterY = this.ball.y + this.ball.baseSize / 2;
+            this.player.moveTo(targetCenterY, this.canvas.height, 1.0);
+        } else {
+            // 手動操作（画面タッチ優先、非タッチ時はキーボード判定）
+            if (this.input.touchY !== null) {
+                this.player.moveTo(this.input.touchY, this.canvas.height, CONFIG.paddle.touchLerp);
+            } else {
+                let dir = 0;
+                const isFlipped = Math.cos(this.glitch.vertigo.currentAngle) < 0;
+                if (this.input.isUp()) dir += isFlipped ? 1 : -1;
+                if (this.input.isDown()) dir += isFlipped ? -1 : 1;
+                this.player.update(dir, this.canvas.height);
             }
-            return;
         }
 
-        // プレイヤー入力の反映
-        let playerDir = 0;
-        if (this.input.isUp()) playerDir -= 1;
-        if (this.input.isDown()) playerDir += 1;
-        this.player.update(playerDir, this.canvas.height);
+        this.ai.trackBall(this.ball, this.canvas.height);
 
-        // AIの更新
-        this.updateAI();
+        const isFrozen = this.glitch.timeFreeze.active;
+        this.ball.update(currentPhase.trailLength, isFrozen);
 
-        // ボールの更新
-        this.ball.update();
+        if (!isFrozen) {
+            this.checkCollisions(isBotHandling);
+        }
 
-        // 衝突判定とイベントトリガー
-        this.checkCollisions();
+        this.particles.forEach(p => p.update());
+        this.particles = this.particles.filter(p => p.life > 0);
+
+        this.floatingTexts.forEach(t => t.update());
+        this.floatingTexts = this.floatingTexts.filter(t => t.life > 0);
     }
 
-    // -------------------------------------------------------------------------
-    // 描画処理
-    // -------------------------------------------------------------------------
-
-    /** 画面全体の描画 */
     draw() {
-        // 背景クリア
-        this.ctx.fillStyle = CONFIG.colors.background;
+        this.ctx.save();
+        const currentPhase = PHASES[this.currentPhaseIndex];
+
+        if (this.shakeTimer > 0) {
+            const shakeX = (Math.random() - 0.5) * 8;
+            const shakeY = (Math.random() - 0.5) * 8;
+            this.ctx.translate(shakeX, shakeY);
+            this.shakeTimer--;
+        }
+
+        if (Math.abs(this.glitch.vertigo.currentAngle) > 0.001) {
+            this.ctx.translate(this.canvas.width / 2, this.canvas.height / 2);
+            this.ctx.rotate(this.glitch.vertigo.currentAngle);
+            this.ctx.translate(-this.canvas.width / 2, -this.canvas.height / 2);
+        }
+
+        this.ctx.fillStyle = '#030308';
         this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
-        // 中央の点線を描画
-        this.drawCenterLine();
-
-        // スコア表示
-        this.drawScore();
-
-        // パドルとボールの描画
-        this.player.draw(this.ctx);
-        this.ai.draw(this.ctx);
-        this.ball.draw(this.ctx);
-
-        // ゲームオーバー時のオーバーレイ
-        if (this.state === 'GAME_OVER') {
-            this.drawGameOver();
+        if (this.beatPulse > 0.05) {
+            const pulseAlpha = this.beatPulse * currentPhase.pulseBoost;
+            this.ctx.fillStyle = currentPhase.color;
+            this.ctx.globalAlpha = pulseAlpha;
+            this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+            this.ctx.globalAlpha = 1.0;
         }
+
+        if (this.glitch.gravity.active) {
+            this.drawBlackHole();
+        }
+
+        this.drawCenterLine(currentPhase);
+        this.drawUI(currentPhase);
+
+        this.player.draw(this.ctx, currentPhase.color, currentPhase.glow, this.autoBot);
+        this.ai.draw(this.ctx, this.beatPulse);
+        this.ball.draw(this.ctx, this.beatPulse, currentPhase.color);
+
+        if (this.glitch.mirage.active) {
+            this.drawMirageDecoys();
+        }
+
+        this.particles.forEach(p => p.draw(this.ctx));
+        this.floatingTexts.forEach(t => t.draw(this.ctx));
+
+        if (this.glitch.blackout.alpha > 0.01) {
+            this.drawBlackout();
+        }
+
+        if (this.glitch.warningTimer > 0 && this.glitch.warningText) {
+            this.drawWarningBanner();
+        }
+
+        if (this.glitchTimer > 0) {
+            this.ctx.fillStyle = 'rgba(255, 0, 50, 0.28)';
+            this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+            this.ctx.fillStyle = currentPhase.color;
+            for (let i = 0; i < 4; i++) {
+                const gy = Math.random() * this.canvas.height;
+                this.ctx.fillRect(0, gy, this.canvas.width, Math.random() * 6 + 2);
+            }
+            this.glitchTimer--;
+        }
+
+        this.ctx.restore();
     }
 
-    /** センターライン描画 */
-    drawCenterLine() {
-        this.ctx.strokeStyle = CONFIG.colors.centerLine;
+    drawBlackHole() {
+        this.ctx.save();
+        const gx = this.glitch.gravity.x;
+        const gy = this.glitch.gravity.y;
+        this.ctx.translate(gx, gy);
+        this.ctx.rotate(this.glitch.gravity.swirlAngle);
+
+        for (let r = 50; r >= 10; r -= 10) {
+            this.ctx.strokeStyle = `rgba(176, 38, 255, ${0.15 + (50 - r) * 0.01})`;
+            this.ctx.lineWidth = 3;
+            this.ctx.beginPath();
+            this.ctx.arc(0, 0, r, 0, Math.PI * 1.5);
+            this.ctx.stroke();
+        }
+
+        this.ctx.fillStyle = '#050014';
+        this.ctx.shadowColor = '#b026ff';
+        this.ctx.shadowBlur = 25;
+        this.ctx.beginPath();
+        this.ctx.arc(0, 0, 16, 0, Math.PI * 2);
+        this.ctx.fill();
+        this.ctx.restore();
+    }
+
+    drawMirageDecoys() {
+        this.ctx.save();
+        this.glitch.mirage.decoys.forEach((decoy) => {
+            decoy.trail.forEach((p, idx) => {
+                const a = (1 - (idx / decoy.trail.length)) * 0.25;
+                this.ctx.fillStyle = `rgba(0, 240, 255, ${a})`;
+                this.ctx.fillRect(p.x, p.y, decoy.size * 0.8, decoy.size * 0.8);
+            });
+            this.ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+            this.ctx.shadowColor = '#00f0ff';
+            this.ctx.shadowBlur = 10;
+            this.ctx.fillRect(decoy.x, decoy.y, decoy.size, decoy.size);
+        });
+        this.ctx.restore();
+    }
+
+    drawBlackout() {
+        this.ctx.save();
+        this.ctx.fillStyle = `rgba(3, 3, 8, ${this.glitch.blackout.alpha})`;
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+        this.ctx.fillStyle = 'rgba(0, 240, 255, 0.08)';
+        for (let i = 0; i < 3; i++) {
+            const y = (Date.now() / 4 + i * 160) % this.canvas.height;
+            this.ctx.fillRect(0, y, this.canvas.width, 2);
+        }
+        this.ctx.restore();
+    }
+
+    drawWarningBanner() {
+        this.ctx.save();
+        this.ctx.fillStyle = 'rgba(255, 0, 55, 0.85)';
+        this.ctx.fillRect(0, this.canvas.height / 2 - 24, this.canvas.width, 48);
+
+        this.ctx.strokeStyle = '#ffffff';
         this.ctx.lineWidth = 2;
+        this.ctx.strokeRect(0, this.canvas.height / 2 - 24, this.canvas.width, 48);
+
+        this.ctx.fillStyle = '#ffffff';
+        this.ctx.font = `bold 18px ${CONFIG.game.fontFamily}`;
+        this.ctx.textAlign = 'center';
+        this.ctx.shadowColor = '#000000';
+        this.ctx.shadowBlur = 8;
+        this.ctx.fillText(`⚠️ ${this.glitch.warningText} ⚠️`, this.canvas.width / 2, this.canvas.height / 2 + 6);
+        this.ctx.restore();
+    }
+
+    drawCenterLine(phase) {
+        this.ctx.save();
+        this.ctx.strokeStyle = phase.color;
+        this.ctx.globalAlpha = 0.25 + this.beatPulse * 0.35;
+        this.ctx.lineWidth = 2 + this.beatPulse * 2;
+        this.ctx.shadowColor = phase.color;
+        this.ctx.shadowBlur = this.beatPulse * 12;
         this.ctx.setLineDash(CONFIG.game.centerLineDash);
+
         this.ctx.beginPath();
         this.ctx.moveTo(this.canvas.width / 2, 0);
         this.ctx.lineTo(this.canvas.width / 2, this.canvas.height);
         this.ctx.stroke();
-        this.ctx.setLineDash([]); // リセット
+        this.ctx.restore();
     }
 
-    /** スコア描画 */
-    drawScore() {
-        this.ctx.fillStyle = CONFIG.colors.text;
-        this.ctx.font = `48px ${CONFIG.game.fontFamily}`;
+    drawUI(phase) {
+        this.ctx.save();
+
+        // プレイヤー側スコア
+        this.ctx.fillStyle = phase.color;
+        this.ctx.shadowColor = phase.color;
+        this.ctx.shadowBlur = 8 + this.beatPulse * 10;
+        this.ctx.font = `bold 15px ${CONFIG.game.fontFamily}`;
+        this.ctx.textAlign = 'left';
+        this.ctx.fillText(`BEST: ${this.maxRally}`, 30, 36);
+
+        this.ctx.font = `bold 40px ${CONFIG.game.fontFamily}`;
+        this.ctx.fillText(`RALLY ${this.currentRally}`, 30, 78);
+
+        // 中央上部：音楽フェーズインジケーター
         this.ctx.textAlign = 'center';
+        this.ctx.font = `bold 14px ${CONFIG.game.fontFamily}`;
+        this.ctx.fillStyle = phase.color;
+        this.ctx.fillText(`[ ${phase.name} ]`, this.canvas.width / 2, 32);
 
-        // プレイヤー側
-        this.ctx.fillText(this.player.score, this.canvas.width / 4, 60);
-        // AI側
-        this.ctx.fillText(this.ai.score, (this.canvas.width / 4) * 3, 60);
+        // フェーズプログレスゲージ
+        const barWidth = 140;
+        const barHeight = 4;
+        const barX = this.canvas.width / 2 - barWidth / 2;
+        const barY = 40;
+        this.ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+        this.ctx.fillRect(barX, barY, barWidth, barHeight);
+
+        let progress = 1.0;
+        if (this.currentPhaseIndex < PHASES.length - 1) {
+            const currentMin = phase.minRally;
+            const nextMin = PHASES[this.currentPhaseIndex + 1].minRally;
+            progress = Math.min(1.0, (this.currentRally - currentMin) / (nextMin - currentMin));
+        }
+        this.ctx.fillStyle = phase.color;
+        this.ctx.fillRect(barX, barY, barWidth * progress, barHeight);
+
+        // 【新UI】オートプレイBOT点滅インジケーター
+        if (this.autoBot) {
+            const blink = Math.floor(Date.now() / 320) % 2 === 0;
+            if (blink) {
+                this.ctx.fillStyle = '#ffea00';
+                this.ctx.shadowColor = '#ffea00';
+                this.ctx.shadowBlur = 12;
+                this.ctx.font = `bold 13px ${CONFIG.game.fontFamily}`;
+                this.ctx.fillText('[ AUTO BOT: ON ]', this.canvas.width / 2, 60);
+            }
+        }
+
+        // AI側ステータス（トリプルタップ判定エリア）
+        this.ctx.fillStyle = '#ff0055';
+        this.ctx.shadowColor = '#ff0055';
+        this.ctx.shadowBlur = 8 + this.beatPulse * 10;
+        this.ctx.textAlign = 'right';
+        this.ctx.font = `bold 15px ${CONFIG.game.fontFamily}`;
+        this.ctx.fillText('TARGET: ABSOLUTE DEFENSE', this.canvas.width - 30, 36);
+
+        this.ctx.font = `bold 32px ${CONFIG.game.fontFamily}`;
+        this.ctx.fillText('DEFENSE 100%', this.canvas.width - 30, 74);
+
+        this.ctx.restore();
     }
 
-    /** ゲームオーバー画面描画 */
-    drawGameOver() {
-        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
-        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-
-        this.ctx.fillStyle = CONFIG.colors.text;
-        this.ctx.font = `36px ${CONFIG.game.fontFamily}`;
-        this.ctx.textAlign = 'center';
-
-        const message = this.winner === 'PLAYER' ? 'YOU WIN!' : 'GAME OVER';
-        this.ctx.fillText(message, this.canvas.width / 2, this.canvas.height / 2 - 20);
-
-        this.ctx.font = `18px ${CONFIG.game.fontFamily}`;
-        this.ctx.fillText('PRESS [SPACE] TO RESTART', this.canvas.width / 2, this.canvas.height / 2 + 30);
-    }
-
-    // -------------------------------------------------------------------------
-    // ゲームループ開始
-    // -------------------------------------------------------------------------
     start() {
         const loop = () => {
             this.update();
@@ -495,47 +1762,11 @@ class Game {
     }
 }
 
-// ゲーム起動
+// 起動
 window.addEventListener('DOMContentLoaded', () => {
     const game = new Game('gameCanvas');
     game.start();
 });
-
-/**
- * =============================================================================
- * 6. 改造のヒント（機能追加のアイデア）
- * =============================================================================
- * 
- * 1. 【マルチボール（ボールを複数にする）】:
- *    - `Game.ball` を `Game.balls = []` 配列に変更。
- *    - `update()` と `draw()` 内で `this.balls.forEach(b => b.update())` する。
- *    - スコア時や特定イベントで `this.balls.push(new Ball(...))` を呼ぶ。
- * 
- * 2. 【アイテム／パワーアップの出現】:
- *    - `Item` クラスを作成（x, y, type, size）。
- *    - `Game` クラスに `this.items = []` を持たせる。
- *    - ボールがパドルに当たった回数などで一定確率でランダムな位置にスポーン。
- *    - ボールまたはパドルがアイテムに触れたら、`paddle.height *= 1.5`（巨大化）や
- *      `paddle.speed *= 1.3` などの効果を付与する。
- * 
- * 3. 【Web Audio API を使ったレトロ効果音】:
- *    - 外部ファイル不要でピコピコ音を鳴らす例：
- *      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
- *      function beep(freq, duration) {
- *          const osc = audioCtx.createOscillator();
- *          osc.frequency.value = freq;
- *          osc.connect(audioCtx.destination);
- *          osc.start();
- *          osc.stop(audioCtx.currentTime + duration);
- *      }
- *    - `onBallHitPaddle` 内で `beep(440, 0.05)`（ラ音）
- *    - `onBallHitWall` 内で `beep(220, 0.05)`
- *    - `onScore` 内で `beep(880, 0.2)` などを呼び出すだけでAtari風のサウンドに。
- * 
- * 4. 【マウス操作 / スマホタッチ対応】:
- *    - `InputHandler` に `canvas.addEventListener('mousemove', e => ...)` を追加。
- *    - `player.y` をマウスの Y 座標に追従させるモードに切り替える。
- */
 </script>
 </body>
 </html>
