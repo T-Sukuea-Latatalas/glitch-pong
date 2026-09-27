@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Atari-style Pong Template</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: #111;
+            color: #fff;
+            font-family: 'Courier New', Courier, monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+
+        #game-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            box-shadow: 0 0 20px rgba(255, 255, 255, 0.1);
+        }
+
+        canvas {
+            background-color: #000;
+            border: 2px solid #333;
+            display: block;
+        }
+
+        .instructions {
+            margin-top: 12px;
+            font-size: 14px;
+            color: #888;
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="gameCanvas"></canvas>
+    <div class="instructions">操作: [W] / [S] または [↑] / [↓] キー | [Space] でリスタート</div>
+</div>
+
+<script>
+/**
+ * =============================================================================
+ * 1. 設定パラメータ (CONFIG)
+ * =============================================================================
+ * ゲームバランスや見た目に関する定数をすべてここに集約しています。
+ * 値を書き換えるだけで簡単にゲームの難易度やルールを調整できます。
+ */
+const CONFIG = {
+    canvas: {
+        width: 800,
+        height: 500,
+    },
+    game: {
+        winningScore: 5,        // 勝利に必要なスコア
+        centerLineDash: [6, 6], // 中央線の点線パターン [線の長さ, 空白の長さ]
+        fontFamily: "'Courier New', Courier, monospace",
+    },
+    colors: {
+        background: '#000000',
+        player: '#ffffff',
+        ai: '#ffffff',
+        ball: '#ffffff',
+        centerLine: '#444444',
+        text: '#ffffff',
+    },
+    ball: {
+        size: 12,               // ボールの一辺の長さ（正方形）
+        initialSpeed: 5,        // 初速
+        speedIncrement: 1.05,   // パドルに当たるごとの加速倍率
+        maxSpeed: 14,           // 最高速度
+        maxBounceAngle: Math.PI / 3, // 反射時の最大角度（60度）
+    },
+    paddle: {
+        width: 12,
+        height: 80,
+        speed: 7,               // プレイヤーの移動速度
+        offsetFromWall: 30,     // 左右の壁からのオフセット
+    },
+    ai: {
+        speed: 5.5,             // AIパドルの移動速度（難易度に直結）
+        reactionLag: 0.1,       // 追従のスムーズさ（0〜1。小さいほど反応が遅れる）
+        predictionError: 15,    // 狙いのブレ・遊び（px単位）
+    }
+};
+
+/**
+ * =============================================================================
+ * 2. 入力ハンドラ (InputHandler)
+ * =============================================================================
+ * 入力デバイス（キーボード）の状態を管理し、パドル操作と疎結合にします。
+ * タッチ操作やマウス操作に拡張したい場合は、このクラス内を拡張します。
+ */
+class InputHandler {
+    constructor() {
+        this.keys = new Set();
+
+        window.addEventListener('keydown', (e) => {
+            this.keys.add(e.code);
+            // ゲーム画面スクロール防止
+            if (['ArrowUp', 'ArrowDown', 'Space'].includes(e.code)) {
+                e.preventDefault();
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            this.keys.delete(e.code);
+        });
+    }
+
+    /** 上方向の入力があるか */
+    isUp() {
+        return this.keys.has('KeyW') || this.keys.has('ArrowUp');
+    }
+
+    /** 下方向の入力があるか */
+    isDown() {
+        return this.keys.has('KeyS') || this.keys.has('ArrowDown');
+    }
+
+    /** スペースキー（リスタートなど）が押されているか */
+    isSpace() {
+        return this.keys.has('Space');
+    }
+}
+
+/**
+ * =============================================================================
+ * 3. パドルクラス (Paddle)
+ * =============================================================================
+ */
+class Paddle {
+    constructor(x, y, width, height, speed, color) {
+        this.startX = x;
+        this.startY = y;
+        this.x = x;
+        this.y = y;
+        this.width = width;
+        this.height = height;
+        this.speed = speed;
+        this.color = color;
+        this.score = 0;
+    }
+
+    /** 上下移動の更新（0: 停止, -1: 上, 1: 下） */
+    update(direction, canvasHeight) {
+        this.y += direction * this.speed;
+
+        // 壁との衝突（画面外にはみ出さないように制限）
+        if (this.y < 0) {
+            this.y = 0;
+        } else if (this.y + this.height > canvasHeight) {
+            this.y = canvasHeight - this.height;
+        }
+    }
+
+    /** 描画処理 */
+    draw(ctx) {
+        ctx.fillStyle = this.color;
+        ctx.fillRect(this.x, this.y, this.width, this.height);
+    }
+
+    /** リセット処理 */
+    reset() {
+        this.y = this.startY;
+    }
+}
+
+/**
+ * =============================================================================
+ * 4. ボールクラス (Ball)
+ * =============================================================================
+ */
+class Ball {
+    constructor(size, color) {
+        this.size = size;
+        this.color = color;
+        this.x = 0;
+        this.y = 0;
+        this.vx = 0;
+        this.vy = 0;
+        this.speed = CONFIG.ball.initialSpeed;
+    }
+
+    /** ボールを中央にリセットし、指定方向（1: 右, -1: 左）へ射出 */
+    reset(canvasWidth, canvasHeight, direction = 1) {
+        this.x = canvasWidth / 2 - this.size / 2;
+        this.y = canvasHeight / 2 - this.size / 2;
+        this.speed = CONFIG.ball.initialSpeed;
+
+        // 発射角度をランダムに決定（-30度 〜 +30度）
+        const angle = (Math.random() * Math.PI / 3) - (Math.PI / 6);
+        this.vx = direction * this.speed * Math.cos(angle);
+        this.vy = this.speed * Math.sin(angle);
+    }
+
+    /** 位置の更新 */
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+    }
+
+    /** 描画処理 */
+    draw(ctx) {
+        ctx.fillStyle = this.color;
+        ctx.fillRect(this.x, this.y, this.size, this.size);
+    }
+}
+
+/**
+ * =============================================================================
+ * 5. ゲーム本体クラス (Game)
+ * =============================================================================
+ */
+class Game {
+    constructor(canvasId) {
+        this.canvas = document.getElementById(canvasId);
+        this.ctx = this.canvas.getContext('2d');
+
+        this.canvas.width = CONFIG.canvas.width;
+        this.canvas.height = CONFIG.canvas.height;
+
+        this.input = new InputHandler();
+
+        // プレイヤーとAIパドルの初期化
+        this.player = new Paddle(
+            CONFIG.paddle.offsetFromWall,
+            (this.canvas.height - CONFIG.paddle.height) / 2,
+            CONFIG.paddle.width,
+            CONFIG.paddle.height,
+            CONFIG.paddle.speed,
+            CONFIG.colors.player
+        );
+
+        this.ai = new Paddle(
+            this.canvas.width - CONFIG.paddle.offsetFromWall - CONFIG.paddle.width,
+            (this.canvas.height - CONFIG.paddle.height) / 2,
+            CONFIG.paddle.width,
+            CONFIG.paddle.height,
+            CONFIG.ai.speed,
+            CONFIG.colors.ai
+        );
+
+        this.ball = new Ball(CONFIG.ball.size, CONFIG.colors.ball);
+        this.state = 'PLAYING'; // 'PLAYING' | 'GAME_OVER'
+        this.winner = null;
+
+        // ボール初期発射
+        this.ball.reset(this.canvas.width, this.canvas.height, 1);
+    }
+
+    // -------------------------------------------------------------------------
+    // イベントフック群
+    // （効果音の再生、パーティクルの生成、ルール追加などの拡張ポイント）
+    // -------------------------------------------------------------------------
+
+    /** ボールがパドルに当たった時 */
+    onBallHitPaddle(ball, paddle, hitOffsetRatio) {
+        // ヒット位置に応じた反射角の計算（中央なら0度、端に行くほど急角度）
+        const bounceAngle = hitOffsetRatio * CONFIG.ball.maxBounceAngle;
+
+        // 加速
+        ball.speed = Math.min(ball.speed * CONFIG.ball.speedIncrement, CONFIG.ball.maxSpeed);
+
+        const direction = (paddle === this.player) ? 1 : -1;
+        ball.vx = direction * ball.speed * Math.cos(bounceAngle);
+        ball.vy = ball.speed * Math.sin(bounceAngle);
+
+        /* [改造ポイント]: ここでパドルヒット時のSE再生や画面揺れエフェクトを追加可能 */
+    }
+
+    /** ボールが上下の壁に当たった時 */
+    onBallHitWall(ball, wall) {
+        ball.vy = -ball.vy;
+
+        /* [改造ポイント]: ここで壁反射のSE再生を追加可能 */
+    }
+
+    /** 誰かが得点した時 */
+    onScore(scorer) {
+        scorer.score++;
+
+        // 勝利判定
+        if (scorer.score >= CONFIG.game.winningScore) {
+            this.onGameOver(scorer === this.player ? 'PLAYER' : 'AI');
+        } else {
+            // 得点された側にボールをサーブ
+            const nextDirection = (scorer === this.player) ? -1 : 1;
+            this.ball.reset(this.canvas.width, this.canvas.height, nextDirection);
+        }
+
+        /* [改造ポイント]: 得点時の歓声や点滅演出を追加可能 */
+    }
+
+    /** ゲーム終了時 */
+    onGameOver(winner) {
+        this.state = 'GAME_OVER';
+        this.winner = winner;
+    }
+
+    /** ゲームリセット */
+    restart() {
+        this.player.score = 0;
+        this.ai.score = 0;
+        this.player.reset();
+        this.ai.reset();
+        this.winner = null;
+        this.state = 'PLAYING';
+        this.ball.reset(this.canvas.width, this.canvas.height, 1);
+    }
+
+    // -------------------------------------------------------------------------
+    // ロジック更新
+    // -------------------------------------------------------------------------
+
+    /** AIの思考・操作更新 */
+    updateAI() {
+        // パドル中央とボール中心のY座標差分
+        const paddleCenterY = this.ai.y + this.ai.height / 2;
+        const ballCenterY = this.ball.y + this.ball.size / 2;
+        const diff = ballCenterY - paddleCenterY;
+
+        // 遊び（不感帯）を持たせて小刻みな震えを抑止
+        if (Math.abs(diff) > CONFIG.ai.predictionError) {
+            if (diff > 0) {
+                this.ai.update(1, this.canvas.height);
+            } else {
+                this.ai.update(-1, this.canvas.height);
+            }
+        }
+    }
+
+    /** 衝突判定 */
+    checkCollisions() {
+        const ball = this.ball;
+
+        // 1. 上下の壁との衝突
+        if (ball.y <= 0) {
+            ball.y = 0;
+            this.onBallHitWall(ball, 'TOP');
+        } else if (ball.y + ball.size >= this.canvas.height) {
+            ball.y = this.canvas.height - ball.size;
+            this.onBallHitWall(ball, 'BOTTOM');
+        }
+
+        // 2. プレイヤーパドルとの衝突判定 (AABB)
+        if (
+            ball.x <= this.player.x + this.player.width &&
+            ball.x + ball.size >= this.player.x &&
+            ball.y + ball.size >= this.player.y &&
+            ball.y <= this.player.y + this.player.height &&
+            ball.vx < 0
+        ) {
+            ball.x = this.player.x + this.player.width; // めり込み防止
+            // パドル中央を0とした -1.0 〜 1.0 の正規化ヒット位置
+            const hitOffsetRatio = ((ball.y + ball.size / 2) - (this.player.y + this.player.height / 2)) / (this.player.height / 2);
+            this.onBallHitPaddle(ball, this.player, Math.max(-1, Math.min(1, hitOffsetRatio)));
+        }
+
+        // 3. AIパドルとの衝突判定 (AABB)
+        if (
+            ball.x + ball.size >= this.ai.x &&
+            ball.x <= this.ai.x + this.ai.width &&
+            ball.y + ball.size >= this.ai.y &&
+            ball.y <= this.ai.y + this.ai.height &&
+            ball.vx > 0
+        ) {
+            ball.x = this.ai.x - ball.size; // めり込み防止
+            const hitOffsetRatio = ((ball.y + ball.size / 2) - (this.ai.y + this.ai.height / 2)) / (this.ai.height / 2);
+            this.onBallHitPaddle(ball, this.ai, Math.max(-1, Math.min(1, hitOffsetRatio)));
+        }
+
+        // 4. 得点判定（左右の壁を通過）
+        if (ball.x + ball.size < 0) {
+            this.onScore(this.ai);
+        } else if (ball.x > this.canvas.width) {
+            this.onScore(this.player);
+        }
+    }
+
+    /** 状態の更新 */
+    update() {
+        if (this.state === 'GAME_OVER') {
+            if (this.input.isSpace()) {
+                this.restart();
+            }
+            return;
+        }
+
+        // プレイヤー入力の反映
+        let playerDir = 0;
+        if (this.input.isUp()) playerDir -= 1;
+        if (this.input.isDown()) playerDir += 1;
+        this.player.update(playerDir, this.canvas.height);
+
+        // AIの更新
+        this.updateAI();
+
+        // ボールの更新
+        this.ball.update();
+
+        // 衝突判定とイベントトリガー
+        this.checkCollisions();
+    }
+
+    // -------------------------------------------------------------------------
+    // 描画処理
+    // -------------------------------------------------------------------------
+
+    /** 画面全体の描画 */
+    draw() {
+        // 背景クリア
+        this.ctx.fillStyle = CONFIG.colors.background;
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+        // 中央の点線を描画
+        this.drawCenterLine();
+
+        // スコア表示
+        this.drawScore();
+
+        // パドルとボールの描画
+        this.player.draw(this.ctx);
+        this.ai.draw(this.ctx);
+        this.ball.draw(this.ctx);
+
+        // ゲームオーバー時のオーバーレイ
+        if (this.state === 'GAME_OVER') {
+            this.drawGameOver();
+        }
+    }
+
+    /** センターライン描画 */
+    drawCenterLine() {
+        this.ctx.strokeStyle = CONFIG.colors.centerLine;
+        this.ctx.lineWidth = 2;
+        this.ctx.setLineDash(CONFIG.game.centerLineDash);
+        this.ctx.beginPath();
+        this.ctx.moveTo(this.canvas.width / 2, 0);
+        this.ctx.lineTo(this.canvas.width / 2, this.canvas.height);
+        this.ctx.stroke();
+        this.ctx.setLineDash([]); // リセット
+    }
+
+    /** スコア描画 */
+    drawScore() {
+        this.ctx.fillStyle = CONFIG.colors.text;
+        this.ctx.font = `48px ${CONFIG.game.fontFamily}`;
+        this.ctx.textAlign = 'center';
+
+        // プレイヤー側
+        this.ctx.fillText(this.player.score, this.canvas.width / 4, 60);
+        // AI側
+        this.ctx.fillText(this.ai.score, (this.canvas.width / 4) * 3, 60);
+    }
+
+    /** ゲームオーバー画面描画 */
+    drawGameOver() {
+        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+        this.ctx.fillStyle = CONFIG.colors.text;
+        this.ctx.font = `36px ${CONFIG.game.fontFamily}`;
+        this.ctx.textAlign = 'center';
+
+        const message = this.winner === 'PLAYER' ? 'YOU WIN!' : 'GAME OVER';
+        this.ctx.fillText(message, this.canvas.width / 2, this.canvas.height / 2 - 20);
+
+        this.ctx.font = `18px ${CONFIG.game.fontFamily}`;
+        this.ctx.fillText('PRESS [SPACE] TO RESTART', this.canvas.width / 2, this.canvas.height / 2 + 30);
+    }
+
+    // -------------------------------------------------------------------------
+    // ゲームループ開始
+    // -------------------------------------------------------------------------
+    start() {
+        const loop = () => {
+            this.update();
+            this.draw();
+            requestAnimationFrame(loop);
+        };
+        requestAnimationFrame(loop);
+    }
+}
+
+// ゲーム起動
+window.addEventListener('DOMContentLoaded', () => {
+    const game = new Game('gameCanvas');
+    game.start();
+});
+
+/**
+ * =============================================================================
+ * 6. 改造のヒント（機能追加のアイデア）
+ * =============================================================================
+ * 
+ * 1. 【マルチボール（ボールを複数にする）】:
+ *    - `Game.ball` を `Game.balls = []` 配列に変更。
+ *    - `update()` と `draw()` 内で `this.balls.forEach(b => b.update())` する。
+ *    - スコア時や特定イベントで `this.balls.push(new Ball(...))` を呼ぶ。
+ * 
+ * 2. 【アイテム／パワーアップの出現】:
+ *    - `Item` クラスを作成（x, y, type, size）。
+ *    - `Game` クラスに `this.items = []` を持たせる。
+ *    - ボールがパドルに当たった回数などで一定確率でランダムな位置にスポーン。
+ *    - ボールまたはパドルがアイテムに触れたら、`paddle.height *= 1.5`（巨大化）や
+ *      `paddle.speed *= 1.3` などの効果を付与する。
+ * 
+ * 3. 【Web Audio API を使ったレトロ効果音】:
+ *    - 外部ファイル不要でピコピコ音を鳴らす例：
+ *      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+ *      function beep(freq, duration) {
+ *          const osc = audioCtx.createOscillator();
+ *          osc.frequency.value = freq;
+ *          osc.connect(audioCtx.destination);
+ *          osc.start();
+ *          osc.stop(audioCtx.currentTime + duration);
+ *      }
+ *    - `onBallHitPaddle` 内で `beep(440, 0.05)`（ラ音）
+ *    - `onBallHitWall` 内で `beep(220, 0.05)`
+ *    - `onScore` 内で `beep(880, 0.2)` などを呼び出すだけでAtari風のサウンドに。
+ * 
+ * 4. 【マウス操作 / スマホタッチ対応】:
+ *    - `InputHandler` に `canvas.addEventListener('mousemove', e => ...)` を追加。
+ *    - `player.y` をマウスの Y 座標に追従させるモードに切り替える。
+ */
+</script>
+</body>
+</html>
